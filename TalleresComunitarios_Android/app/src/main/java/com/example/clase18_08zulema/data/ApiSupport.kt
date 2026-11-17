@@ -4,6 +4,7 @@ import com.google.gson.Gson
 import retrofit2.Call
 import retrofit2.Callback
 import retrofit2.Response
+import java.time.LocalDateTime
 
 sealed class ApiResult<out T> {
     data class Success<T>(val value: T) : ApiResult<T>()
@@ -19,8 +20,47 @@ object WorkshopsRepository {
 
     fun workshop(id: Long, done: (ApiResult<Workshop>) -> Unit) = api.getWorkshop(id).deliver(done)
     fun registrations(id: Long, done: (ApiResult<List<Registration>>) -> Unit) = api.listRegistrations(id).deliver(done)
-    fun saveWorkshop(id: Long?, request: WorkshopRequest, done: (ApiResult<Workshop>) -> Unit) =
-        (if (id == null) api.createWorkshop(request) else api.updateWorkshop(id, request)).deliver(done)
+    fun saveWorkshop(id: Long?, request: WorkshopRequest, done: (ApiResult<Workshop>) -> Unit) {
+        if (id == null) {
+            api.createWorkshop(request).deliver(done)
+            return
+        }
+
+        api.updateWorkshop(id, request).deliver { updateResult ->
+            when (updateResult) {
+                is ApiResult.Failure -> done(updateResult)
+                is ApiResult.Success -> api.getWorkshop(id).deliver { persistedResult ->
+                    when (persistedResult) {
+                        is ApiResult.Failure -> done(ApiResult.Failure(
+                            "El servidor aceptó la edición, pero no se pudo confirmar el registro guardado. Vuelve a intentarlo."
+                        ))
+                        is ApiResult.Success -> {
+                            val persisted = persistedResult.value
+                            if (matchesRequest(persisted, request)) {
+                                done(ApiResult.Success(persisted))
+                            } else {
+                                done(ApiResult.Failure(
+                                    "El taller no quedó actualizado en la base de datos. Revisa la conexión del backend y vuelve a intentarlo."
+                                ))
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    private fun matchesRequest(workshop: Workshop, request: WorkshopRequest): Boolean {
+        val savedDateTime = runCatching { LocalDateTime.parse(workshop.dateTime).withNano(0) }.getOrNull()
+        val requestedDateTime = runCatching { LocalDateTime.parse(request.dateTime).withNano(0) }.getOrNull()
+        return workshop.name == request.name.trim() &&
+            workshop.description == request.description.trim() &&
+            workshop.instructor == request.instructor.trim() &&
+            workshop.category == request.category.trim() &&
+            workshop.imageUrl == request.imageUrl?.trim()?.takeIf { it.isNotEmpty() } &&
+            workshop.maxCapacity == request.maxCapacity &&
+            savedDateTime != null && savedDateTime == requestedDateTime
+    }
     fun cancelWorkshop(id: Long, done: (ApiResult<Boolean>) -> Unit) = api.cancelWorkshop(id).enqueue(object : Callback<Void> {
         override fun onResponse(call: Call<Void>, response: Response<Void>) {
             if (response.isSuccessful) done(ApiResult.Success(true))
@@ -31,6 +71,10 @@ object WorkshopsRepository {
         }
     })
     fun register(request: RegistrationRequest, done: (ApiResult<Registration>) -> Unit) = api.createRegistration(request).deliver(done)
+    fun cancelRegistration(workshopId: Long, document: String, done: (ApiResult<Registration>) -> Unit) =
+        api.cancelRegistration(workshopId, document.trim()).deliver(done)
+    fun markAttendance(registrationId: Long, done: (ApiResult<Registration>) -> Unit) =
+        api.markAttendance(registrationId).deliver(done)
 
     private fun <T> Call<T>.deliver(done: (ApiResult<T>) -> Unit) = enqueue(object : Callback<T> {
         override fun onResponse(call: Call<T>, response: Response<T>) {

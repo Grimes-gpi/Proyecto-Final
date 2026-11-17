@@ -9,6 +9,7 @@ import retrofit2.http.GET
 import retrofit2.http.POST
 import retrofit2.http.PUT
 import retrofit2.http.Path
+import retrofit2.http.PATCH
 import retrofit2.http.Query
 
 interface WorkshopsApi {
@@ -22,6 +23,11 @@ interface WorkshopsApi {
     @DELETE("api/workshops/{id}") fun cancelWorkshop(@Path("id") id: Long): Call<Void>
     @GET("api/workshops/{id}/registrations") fun listRegistrations(@Path("id") id: Long): Call<List<Registration>>
     @POST("api/registrations") fun createRegistration(@Body request: RegistrationRequest): Call<Registration>
+    @DELETE("api/workshops/{id}/registrations") fun cancelRegistration(
+        @Path("id") workshopId: Long,
+        @Query("document") beneficiaryDocument: String
+    ): Call<Registration>
+    @PATCH("api/registrations/{id}/attendance") fun markAttendance(@Path("id") registrationId: Long): Call<Registration>
 
     companion object {
         const val DEFAULT_BASE_URL = "http://10.0.2.2:8081/"

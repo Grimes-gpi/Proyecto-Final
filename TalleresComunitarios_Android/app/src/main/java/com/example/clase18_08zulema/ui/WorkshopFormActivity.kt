@@ -55,7 +55,7 @@ class WorkshopFormActivity : AppCompatActivity() {
         timeButton = Ui.button(this, "Seleccionar hora") { chooseTime() }
         page.addView(timeButton)
         page.addView(Ui.gap(this, 16))
-        page.addView(Ui.button(this, "Guardar taller") { save() })
+        page.addView(Ui.button(this, if (workshopId == null) "Crear taller" else "Guardar cambios") { save() })
         page.addView(Ui.gap(this, 8))
         page.addView(Ui.button(this, "Volver", Ui.muted) { finish() })
         setContentView(ScrollView(this).apply { addView(page) })
@@ -147,7 +147,10 @@ class WorkshopFormActivity : AppCompatActivity() {
         )
         WorkshopsRepository.saveWorkshop(workshopId, request) { result ->
             when (result) {
-                is ApiResult.Success -> { Ui.toast(this, "Taller guardado."); finish() }
+                is ApiResult.Success -> {
+                    Ui.toast(this, if (workshopId == null) "Taller creado." else "Cambios guardados y verificados.")
+                    finish()
+                }
                 is ApiResult.Failure -> Ui.toast(this, result.message)
             }
         }

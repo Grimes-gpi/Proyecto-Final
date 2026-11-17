@@ -1,13 +1,22 @@
 <resources xmlns:tools="http://schemas.android.com/tools">
-    <!-- Base application theme. -->
+    <!--
+        Solo tokens de color: la UI se construye en Kotlin (ui/kit/Palette.kt).
+        Estos valores replican la paleta para que diálogos, selectores de fecha/hora y menús coincidan.
+    -->
     <style name="Base.Theme.Clase1808Zulema" parent="Theme.Material3.DayNight.NoActionBar">
-        <item name="colorPrimary">#0087B2</item>
-        <item name="colorSecondary">#147C69</item>
-        <item name="colorTertiary">#B35B3F</item>
-        <item name="android:statusBarColor">#F5F9FB</item>
-        <item name="android:windowLightStatusBar">true</item>
-        <item name="android:navigationBarColor">#F5F9FB</item>
-        <item name="android:windowLightNavigationBar">true</item>
+        <item name="colorPrimary">#0A6C8F</item>
+        <item name="colorOnPrimary">#FFFFFF</item>
+        <item name="colorPrimaryContainer">#D9F0F8</item>
+        <item name="colorOnPrimaryContainer">#00384C</item>
+        <item name="colorSecondary">#167A4F</item>
+        <item name="colorTertiary">#E8603F</item>
+        <item name="colorError">#B93A26</item>
+        <item name="android:colorBackground">#F4F6F8</item>
+        <item name="colorSurface">#FFFFFF</item>
+        <item name="colorOnSurface">#0E1A22</item>
+        <item name="colorOnSurfaceVariant">#56656F</item>
+        <item name="colorOutline">#C7D0D7</item>
+        <item name="android:windowBackground">#F4F6F8</item>
     </style>
 
     <style name="Theme.Clase1808Zulema" parent="Base.Theme.Clase1808Zulema" />

@@ -1,7 +1,18 @@
 <resources xmlns:tools="http://schemas.android.com/tools">
-    <!-- Base application theme. -->
+    <!-- Paleta oscura equivalente a Palette.dark en ui/kit/Palette.kt. -->
     <style name="Base.Theme.Clase1808Zulema" parent="Theme.Material3.DayNight.NoActionBar">
-        <!-- Customize your dark theme here. -->
-        <!-- <item name="colorPrimary">@color/my_dark_primary</item> -->
+        <item name="colorPrimary">#6CCDEE</item>
+        <item name="colorOnPrimary">#00293A</item>
+        <item name="colorPrimaryContainer">#0F3D50</item>
+        <item name="colorOnPrimaryContainer">#CDEFFA</item>
+        <item name="colorSecondary">#6AD6A1</item>
+        <item name="colorTertiary">#FF8E72</item>
+        <item name="colorError">#FF907C</item>
+        <item name="android:colorBackground">#0A1015</item>
+        <item name="colorSurface">#121A20</item>
+        <item name="colorOnSurface">#E6EDF1</item>
+        <item name="colorOnSurfaceVariant">#9EB0BB</item>
+        <item name="colorOutline">#52687A</item>
+        <item name="android:windowBackground">#0A1015</item>
     </style>
 </resources>

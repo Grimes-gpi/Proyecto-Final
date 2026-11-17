@@ -31,7 +31,8 @@ data class Registration(
     val beneficiaryName: String,
     val beneficiaryDocument: String,
     val registrationDate: String,
-    val status: String
+    val status: String,
+    val attended: Boolean = false
 )
 
 data class RegistrationRequest(

@@ -1,449 +1,437 @@
 package com.example.clase18_08zulema
 
+import android.animation.ValueAnimator
+import android.app.Activity
+import android.app.ActivityOptions
 import android.content.Intent
-import android.content.pm.PackageManager
+import android.content.res.ColorStateList
 import android.graphics.Color
-import android.graphics.Typeface
-import android.graphics.drawable.GradientDrawable
 import android.os.Bundle
 import android.text.Editable
+import android.text.InputType
 import android.text.TextWatcher
 import android.view.Gravity
 import android.view.View
+import android.view.Window
+import android.widget.FrameLayout
 import android.widget.HorizontalScrollView
-import android.widget.ImageView
 import android.widget.LinearLayout
-import android.widget.ProgressBar
-import android.widget.ScrollView
 import android.widget.TextView
-import androidx.appcompat.app.AlertDialog
-import androidx.appcompat.app.AppCompatActivity
+import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
-import com.bumptech.glide.Glide
-import com.bumptech.glide.load.resource.bitmap.CenterCrop
-import com.bumptech.glide.load.resource.bitmap.RoundedCorners
+import androidx.core.view.ViewCompat
+import androidx.core.view.WindowInsetsCompat
+import androidx.core.widget.NestedScrollView
 import com.example.clase18_08zulema.data.ApiResult
+import com.example.clase18_08zulema.data.AuthRepository
+import com.example.clase18_08zulema.data.UserProfile
 import com.example.clase18_08zulema.data.Workshop
-import com.example.clase18_08zulema.data.WorkshopsApi
 import com.example.clase18_08zulema.data.WorkshopsRepository
-import com.example.clase18_08zulema.ui.Ui
-import com.google.android.material.button.MaterialButton
-import com.google.android.material.card.MaterialCardView
+import com.example.clase18_08zulema.ui.SecureActivity
+import com.example.clase18_08zulema.ui.ServerConfig
+import com.example.clase18_08zulema.ui.WorkshopDetailActivity
+import com.example.clase18_08zulema.ui.WorkshopFormActivity
+import com.example.clase18_08zulema.ui.components.Sheets
+import com.example.clase18_08zulema.ui.components.transitionNameFor
+import com.example.clase18_08zulema.ui.components.workshopCard
+import com.example.clase18_08zulema.ui.kit.Field
+import com.example.clase18_08zulema.ui.kit.Fields
+import com.example.clase18_08zulema.ui.kit.Glyph
+import com.example.clase18_08zulema.ui.kit.Motion
+import com.example.clase18_08zulema.ui.kit.SegmentedControl
+import com.example.clase18_08zulema.ui.kit.Skeleton
+import com.example.clase18_08zulema.ui.kit.TextRole
+import com.example.clase18_08zulema.ui.kit.Tone
+import com.example.clase18_08zulema.ui.kit.applySystemInsets
+import com.example.clase18_08zulema.ui.kit.avatar
+import com.example.clase18_08zulema.ui.kit.colors
+import com.example.clase18_08zulema.ui.kit.dp
+import com.example.clase18_08zulema.ui.kit.dpf
+import com.example.clase18_08zulema.ui.kit.glyph
+import com.example.clase18_08zulema.ui.kit.horizontal
+import com.example.clase18_08zulema.ui.kit.matchWrap
+import com.example.clase18_08zulema.ui.kit.rounded
+import com.example.clase18_08zulema.ui.kit.snack
+import com.example.clase18_08zulema.ui.kit.stateView
+import com.example.clase18_08zulema.ui.kit.style
+import com.example.clase18_08zulema.ui.kit.text
+import com.example.clase18_08zulema.ui.kit.vertical
+import com.example.clase18_08zulema.ui.kit.weighted
 import com.google.android.material.chip.Chip
 import com.google.android.material.chip.ChipGroup
-import com.google.android.material.textfield.TextInputEditText
+import com.google.android.material.floatingactionbutton.ExtendedFloatingActionButton
 import com.google.android.material.textfield.TextInputLayout
-import java.time.LocalDateTime
-import java.time.format.DateTimeFormatter
+import com.google.android.material.transition.platform.MaterialContainerTransformSharedElementCallback
+import java.time.LocalTime
 import java.util.Locale
-import android.os.Build
 
-class MainActivity : AppCompatActivity() {
-    private val localNetworkPermission = registerForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
-        if (granted) loadWorkshops(search.text?.toString()) else showLocalNetworkPermission()
-    }
-    private lateinit var page: LinearLayout
-    private lateinit var list: LinearLayout
-    private lateinit var loading: ProgressBar
-    private lateinit var search: TextInputEditText
-    private lateinit var tags: ChipGroup
+class MainActivity : SecureActivity() {
+    private val c by lazy { colors }
+    private lateinit var user: UserProfile
+
+    private lateinit var scroll: NestedScrollView
+    private lateinit var search: Field
+    private lateinit var chips: ChipGroup
     private lateinit var count: TextView
-    private var categories = listOf("Cocina", "Tecnología")
+    private lateinit var stats: LinearLayout
+    private lateinit var results: FrameLayout
+    private lateinit var list: LinearLayout
+    private lateinit var skeleton: View
+    private lateinit var stateHolder: FrameLayout
+    private var fab: ExtendedFloatingActionButton? = null
+
+    private var workshops: List<Workshop> = emptyList()
+    private var enrolledIds: Set<Long> = emptySet()
+    private var categories: List<String> = listOf("Cocina", "Tecnología")
     private var selectedCategory: String? = null
+    /** 0 = todos los talleres; 1 = "Mis inscripciones" (estudiante) o "Mis talleres" (instructor). */
+    private var scope = 0
     private var searchTask: Runnable? = null
+    private var returningFromDetail = false
+    private var loadedOnce = false
+    private var renderingChips = false
+
+    private val formLauncher = registerForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
+        if (result.resultCode == Activity.RESULT_OK) {
+            result.data?.getStringExtra(WorkshopFormActivity.EXTRA_MESSAGE)?.let { snack(it, Tone.SUCCESS, fab) }
+        }
+    }
+
+    private val localNetworkPermission = registerForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
+        if (granted) load(silent = false) else showPermissionState()
+    }
 
     override fun onCreate(savedInstanceState: Bundle?) {
+        // Transición "container transform": la tarjeta se expande hasta convertirse en el detalle.
+        window.requestFeature(Window.FEATURE_ACTIVITY_TRANSITIONS)
+        setExitSharedElementCallback(MaterialContainerTransformSharedElementCallback())
+        window.sharedElementsUseOverlay = false
         super.onCreate(savedInstanceState)
-        WorkshopsApi.configure(readServerUrl())
-        page = Ui.page(this).apply {
-            setPadding(Ui.dp(this@MainActivity, 20), Ui.dp(this@MainActivity, 18), Ui.dp(this@MainActivity, 20), Ui.dp(this@MainActivity, 32))
-            setBackgroundColor(Color.rgb(245, 249, 251))
+        if (!ensureSession()) return
+        user = currentUser!!
+        enableEdgeToEdge()
+
+        val root = FrameLayout(this).apply { setBackgroundColor(c.background) }
+        val page = vertical().apply {
+            setPadding(dp(20), 0, dp(20), 0)
+            applySystemInsets(top = true, bottom = true, extraTopDp = 12, extraBottomDp = if (user.isInstructor) 104 else 32)
         }
 
-        val brandRow = LinearLayout(this).apply { gravity = Gravity.CENTER_VERTICAL }
-        val brand = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
-        brand.addView(label("AULA ABIERTA", 11, Color.rgb(0, 121, 164), true))
-        brand.addView(label("Talleres de tu comunidad", 14, Color.rgb(77, 97, 108), false))
-        brandRow.addView(brand, LinearLayout.LayoutParams(0, -2, 1f))
-        val connection = MaterialButton(this, null, com.google.android.material.R.attr.materialButtonOutlinedStyle).apply {
-            text = "Conexión"
-            textSize = 12f
-            isAllCaps = false
-            minHeight = Ui.dp(this@MainActivity, 40)
-            setPadding(Ui.dp(this@MainActivity, 10), 0, Ui.dp(this@MainActivity, 10), 0)
-            setOnClickListener { showConnectionDialog() }
-        }
-        brandRow.addView(connection)
-        page.addView(brandRow)
-        page.addView(Ui.gap(this, 24))
+        page.addView(header())
+        page.addView(text(headline(), TextRole.DISPLAY), matchWrap(22, this))
+        page.addView(text(
+            if (user.isInstructor) "Crea, edita y sigue la asistencia de tus talleres."
+            else "Encuentra un espacio para aprender y compartir con tu barrio.",
+            TextRole.BODY, c.inkMuted
+        ), matchWrap(8, this))
 
-        page.addView(Ui.title(this, "Aprende algo nuevo,\ncerca de ti.", 30f))
-        page.addView(Ui.gap(this, 8))
-        page.addView(Ui.body(this, "Encuentra un espacio para compartir lo que sabes y descubrir algo distinto.", 15f))
-        page.addView(Ui.gap(this, 20))
-        page.addView(heroCard())
-        page.addView(Ui.gap(this, 18))
-
-        val searchWrap = TextInputLayout(this).apply {
-            hint = "¿Qué te gustaría aprender?"
-            boxBackgroundMode = TextInputLayout.BOX_BACKGROUND_OUTLINE
-            setBoxCornerRadii(Ui.dp(this@MainActivity, 18).toFloat(), Ui.dp(this@MainActivity, 18).toFloat(), Ui.dp(this@MainActivity, 18).toFloat(), Ui.dp(this@MainActivity, 18).toFloat())
-            setBoxStrokeColor(Color.rgb(202, 218, 226))
-            setStartIconDrawable(android.R.drawable.ic_menu_search)
-            setStartIconTintList(android.content.res.ColorStateList.valueOf(Color.rgb(0, 121, 164)))
-            setBoxBackgroundColor(Color.WHITE)
+        search = Fields.create(this, "Buscar talleres", Glyph.SEARCH, InputType.TYPE_CLASS_TEXT).apply {
+            val pill = dpf(28)
+            layout.setBoxCornerRadii(pill, pill, pill, pill)
+            layout.endIconMode = TextInputLayout.END_ICON_CLEAR_TEXT
         }
-        search = TextInputEditText(this).apply {
-            textSize = 15f
-            setSingleLine(true)
-            setTextColor(Color.rgb(26, 43, 53))
-            setPadding(0, Ui.dp(this@MainActivity, 14), Ui.dp(this@MainActivity, 8), Ui.dp(this@MainActivity, 10))
-        }
-        searchWrap.addView(search)
-        page.addView(searchWrap)
-        search.addTextChangedListener(object : TextWatcher {
+        page.addView(search.layout, matchWrap(22, this))
+        search.edit.addTextChangedListener(object : TextWatcher {
             override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) = Unit
             override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) {
                 searchTask?.let(page::removeCallbacks)
-                val task = Runnable { loadWorkshops(search.text?.toString()) }
+                val task = Runnable { load(silent = false) }
                 searchTask = task
                 page.postDelayed(task, 350)
             }
             override fun afterTextChanged(s: Editable?) = Unit
         })
-        page.addView(Ui.gap(this, 20))
 
-        val titleRow = LinearLayout(this).apply { gravity = Gravity.CENTER_VERTICAL }
-        titleRow.addView(Ui.title(this, "Explora talleres", 21f), LinearLayout.LayoutParams(0, -2, 1f))
-        count = label("", 12, Color.rgb(91, 111, 121), false)
-        titleRow.addView(count)
-        page.addView(titleRow)
-        page.addView(Ui.gap(this, 10))
-        tags = ChipGroup(this).apply {
+        val scopes = if (user.isInstructor) listOf("Todos", "Mis talleres") else listOf("Explorar", "Mis inscripciones")
+        page.addView(SegmentedControl(this, scopes) { scope = it; render(animate = true) }, matchWrap(16, this))
+
+        stats = horizontal().apply { visibility = if (user.isInstructor) View.VISIBLE else View.GONE }
+        page.addView(stats, matchWrap(16, this))
+
+        chips = ChipGroup(this).apply {
             isSingleLine = true
             isSingleSelection = true
             isSelectionRequired = true
-            setChipSpacingHorizontal(Ui.dp(this@MainActivity, 8))
+            chipSpacingHorizontal = dp(8)
+            setOnCheckedStateChangeListener { group, ids ->
+                if (renderingChips) return@setOnCheckedStateChangeListener
+                val label = ids.firstOrNull()?.let { group.findViewById<Chip>(it)?.text?.toString() }
+                val newCategory = label?.takeUnless { it == ALL }
+                if (newCategory != selectedCategory) {
+                    selectedCategory = newCategory
+                    load(silent = false)
+                }
+            }
         }
         page.addView(HorizontalScrollView(this).apply {
             isHorizontalScrollBarEnabled = false
             clipToPadding = false
-            addView(tags)
-        })
-        page.addView(Ui.gap(this, 14))
-        renderTags()
-        loading = ProgressBar(this).apply { isIndeterminate = true }
-        page.addView(loading)
-        list = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
-        page.addView(list)
+            overScrollMode = View.OVER_SCROLL_NEVER
+            addView(chips)
+        }, matchWrap(18, this))
+        renderChips()
 
-        setContentView(ScrollView(this).apply {
+        count = text("", TextRole.CAPTION, c.inkMuted)
+        page.addView(horizontal().apply {
+            addView(context.text(if (user.isInstructor) "Agenda de talleres" else "Próximos talleres", TextRole.TITLE_LARGE), weighted())
+            addView(count)
+        }, matchWrap(22, this))
+
+        results = FrameLayout(this)
+        list = vertical()
+        skeleton = Skeleton.workshopList(this)
+        stateHolder = FrameLayout(this).apply { visibility = View.GONE }
+        results.addView(list)
+        results.addView(skeleton)
+        results.addView(stateHolder)
+        page.addView(results, matchWrap(14, this))
+
+        scroll = NestedScrollView(this).apply {
             clipToPadding = false
+            isFillViewport = true
             addView(page)
-        })
+        }
+        root.addView(scroll, FrameLayout.LayoutParams(-1, -1))
+        if (user.isInstructor) root.addView(createFab())
+        setContentView(root)
+
+        Motion.stagger((0 until page.childCount).map(page::getChildAt).take(6), step = 45)
     }
 
-    override fun onResume() {
-        super.onResume()
-        if (::search.isInitialized) {
-            if (requiresLocalNetworkPermission() && !hasLocalNetworkPermission()) showLocalNetworkPermission()
-            else loadWorkshops(search.text?.toString())
-        }
+    override fun onActivityReenter(resultCode: Int, data: Intent?) {
+        super.onActivityReenter(resultCode, data)
+        returningFromDetail = true
     }
 
-    private fun loadWorkshops(query: String?) {
-        if (!::loading.isInitialized) return
-        if (requiresLocalNetworkPermission() && !hasLocalNetworkPermission()) {
-            showLocalNetworkPermission()
-            return
-        }
-        loading.visibility = View.VISIBLE
-        list.removeAllViews()
-        WorkshopsRepository.workshops(query, selectedCategory) { result ->
-            if (isFinishing || isDestroyed) return@workshops
-            loading.visibility = View.GONE
-            when (result) {
-                is ApiResult.Success -> showWorkshops(result.value)
-                is ApiResult.Failure -> showConnectionError(result.message)
-            }
-        }
-    }
-
-    private fun showWorkshops(items: List<Workshop>) {
-        val freshCategories = items.mapNotNull { it.category?.takeIf(String::isNotBlank) }
-        categories = (listOf("Cocina", "Tecnología") + categories + freshCategories)
-            .distinctBy { it.trim().lowercase(Locale("es", "CO")) }
-            .sortedBy { it.lowercase(Locale("es", "CO")) }
-        renderTags()
-        count.text = if (items.size == 1) "1 taller" else "${items.size} talleres"
-        if (items.isEmpty()) {
-            list.addView(emptyState())
-            return
-        }
-        items.forEachIndexed { index, workshop ->
-            val card = workshopCard(workshop)
-            card.alpha = 0f
-            card.translationY = Ui.dp(this, 12).toFloat()
-            list.addView(card, LinearLayout.LayoutParams(-1, -2).apply { bottomMargin = Ui.dp(this@MainActivity, 14) })
-            card.animate().alpha(1f).translationY(0f).setDuration(260).setStartDelay((index * 35L).coerceAtMost(180L)).start()
-        }
-    }
-
-    private fun workshopCard(workshop: Workshop): MaterialCardView {
-        val card = MaterialCardView(this).apply {
-            radius = Ui.dp(this@MainActivity, 24).toFloat()
-            cardElevation = Ui.dp(this@MainActivity, 2).toFloat()
-            setCardBackgroundColor(Color.WHITE)
-            strokeColor = Color.rgb(229, 237, 241)
-            strokeWidth = Ui.dp(this@MainActivity, 1)
-            isClickable = true
-            isFocusable = true
-            rippleColor = android.content.res.ColorStateList.valueOf(Color.rgb(210, 241, 250))
-            setOnClickListener {
-                startActivity(Intent(this@MainActivity, com.example.clase18_08zulema.ui.WorkshopDetailActivity::class.java).putExtra("workshop_id", workshop.id))
-            }
-        }
-        val content = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
-        val imageUrl = workshop.imageUrl?.takeIf { it.startsWith("https://", ignoreCase = true) }
-        if (imageUrl != null) {
-            val image = ImageView(this).apply {
-                scaleType = ImageView.ScaleType.CENTER_CROP
-                contentDescription = "Imagen del taller ${workshop.name}"
-                layoutParams = LinearLayout.LayoutParams(-1, Ui.dp(this@MainActivity, 174))
-                clipToOutline = true
-                background = GradientDrawable().apply { setColor(Color.rgb(224, 241, 247)) }
-            }
-            Glide.with(this).load(imageUrl)
-                .transform(CenterCrop(), RoundedCorners(Ui.dp(this, 20)))
-                .placeholder(GradientDrawable().apply { setColor(Color.rgb(224, 241, 247)) })
-                .error(GradientDrawable().apply { setColor(Color.rgb(224, 241, 247)) })
-                .into(image)
-            content.addView(image)
+    override fun onAuthenticatedResume() {
+        if (!::results.isInitialized) return
+        if (returningFromDetail) {
+            // Espera a que termine la transición de regreso antes de reemplazar las tarjetas.
+            returningFromDetail = false
+            scroll.postDelayed({ load(silent = true) }, 480)
         } else {
-            content.addView(categoryBanner(workshop.category ?: "Comunidad"))
-        }
-        val textContent = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-            setPadding(Ui.dp(this@MainActivity, 17), Ui.dp(this@MainActivity, 14), Ui.dp(this@MainActivity, 17), Ui.dp(this@MainActivity, 16))
-        }
-        val meta = LinearLayout(this).apply { gravity = Gravity.CENTER_VERTICAL }
-        val categoryPill = label(workshop.category ?: "Comunidad", 11, Color.rgb(0, 103, 145), true).apply {
-            setPadding(Ui.dp(this@MainActivity, 10), Ui.dp(this@MainActivity, 5), Ui.dp(this@MainActivity, 10), Ui.dp(this@MainActivity, 5))
-            background = rounded(Color.rgb(224, 246, 252), 40)
-        }
-        meta.addView(categoryPill, LinearLayout.LayoutParams(0, -2, 1f))
-        val availability = when {
-            workshop.status != "ACTIVE" -> "Cancelado"
-            workshop.availableSlots == 0L -> "Sin cupos"
-            else -> "${workshop.availableSlots} cupos"
-        }
-        meta.addView(label(availability, 12, if (workshop.status == "ACTIVE" && workshop.availableSlots > 0) Color.rgb(0, 112, 91) else Color.rgb(156, 71, 53), true))
-        textContent.addView(meta)
-        textContent.addView(Ui.gap(this, 10))
-        textContent.addView(Ui.title(this, workshop.name, 19f))
-        textContent.addView(Ui.gap(this, 6))
-        textContent.addView(Ui.body(this, "${formatDate(workshop.dateTime)}  ·  ${workshop.instructor}", 13f))
-        textContent.addView(Ui.gap(this, 12))
-        val seats = LinearLayout(this).apply { gravity = Gravity.CENTER_VERTICAL }
-        val people = label("${workshop.registeredPeople}/${workshop.maxCapacity} personas inscritas", 12, Color.rgb(76, 96, 106), false)
-        seats.addView(people, LinearLayout.LayoutParams(0, -2, 1f))
-        seats.addView(label("Ver detalles  →", 12, Color.rgb(0, 121, 164), true))
-        textContent.addView(seats)
-        content.addView(textContent)
-        card.addView(content)
-        return card
-    }
-
-    private fun categoryBanner(category: String): View = TextView(this).apply {
-        val descriptor = when {
-            category.contains("cocin", true) -> "SABORES Y ENCUENTRO"
-            category.contains("tecno", true) -> "IDEAS QUE ABREN CAMINO"
-            category.contains("huerta", true) || category.contains("ambiente", true) -> "APRENDE CON LA TIERRA"
-            else -> "APRENDE EN COMUNIDAD"
-        }
-        text = "${category.uppercase(Locale.getDefault())}  ·  TALLER PRESENCIAL\n$descriptor"
-        textSize = 14f
-        setTextColor(Color.WHITE)
-        setTypeface(typeface, Typeface.BOLD)
-        gravity = Gravity.CENTER_VERTICAL
-        setLineSpacing(Ui.dp(this@MainActivity, 5).toFloat(), 1f)
-        setPadding(Ui.dp(this@MainActivity, 20), 0, Ui.dp(this@MainActivity, 20), 0)
-        layoutParams = LinearLayout.LayoutParams(-1, Ui.dp(this@MainActivity, 118))
-        background = GradientDrawable(GradientDrawable.Orientation.TL_BR, intArrayOf(Color.rgb(14, 174, 219), Color.rgb(10, 128, 181))).apply {
-            cornerRadius = Ui.dp(this@MainActivity, 20).toFloat()
+            load(silent = loadedOnce)
         }
     }
 
-    private fun heroCard(): MaterialCardView = MaterialCardView(this).apply {
-        radius = Ui.dp(this@MainActivity, 26).toFloat()
-        cardElevation = Ui.dp(this@MainActivity, 1).toFloat()
-        strokeWidth = 0
-        setCardBackgroundColor(Color.rgb(11, 164, 211))
-        val hero = LinearLayout(this@MainActivity).apply {
-            orientation = LinearLayout.VERTICAL
-            setPadding(Ui.dp(this@MainActivity, 20), Ui.dp(this@MainActivity, 18), Ui.dp(this@MainActivity, 20), Ui.dp(this@MainActivity, 18))
-            background = GradientDrawable(GradientDrawable.Orientation.TL_BR, intArrayOf(Color.rgb(15, 181, 224), Color.rgb(0, 131, 187))).apply {
-                cornerRadius = Ui.dp(this@MainActivity, 26).toFloat()
+    // ---------- Datos ----------
+
+    private fun load(silent: Boolean) {
+        if (ServerConfig.requiresLocalNetworkPermission(this)) { showPermissionState(); return }
+        if (!silent) Motion.crossfade(skeleton, list, stateHolder)
+        if (!user.isInstructor) loadMyRegistrations()
+        WorkshopsRepository.workshops(search.value, selectedCategory) { result ->
+            if (isFinishing || isDestroyed) return@workshops
+            when (result) {
+                is ApiResult.Success -> {
+                    workshops = result.value.sortedWith(compareBy<Workshop> { !it.isActive }.thenBy { it.dateTime })
+                    mergeCategories(result.value)
+                    render(animate = !silent || !loadedOnce)
+                    loadedOnce = true
+                }
+                is ApiResult.Failure -> if (!silent || workshops.isEmpty()) showError(result.message)
+                else snack(result.message, Tone.ERROR, fab)
             }
         }
-        val row = LinearLayout(this@MainActivity).apply { gravity = Gravity.CENTER_VERTICAL }
-        val copy = LinearLayout(this@MainActivity).apply { orientation = LinearLayout.VERTICAL }
-        copy.addView(label("UN LUGAR PARA CRECER", 10, Color.WHITE, true))
-        copy.addView(Ui.gap(this@MainActivity, 6))
-        copy.addView(label("Aprender también\nes compartir.", 20, Color.WHITE, true))
-        copy.addView(Ui.gap(this@MainActivity, 5))
-        copy.addView(label("Encuentra talleres cerca de ti", 12, Color.rgb(235, 250, 255), false))
-        row.addView(copy, LinearLayout.LayoutParams(0, -2, 1f))
-        val create = MaterialButton(this@MainActivity).apply {
-            text = "Crear taller"
-            textSize = 12f
-            isAllCaps = false
-            setTextColor(Color.rgb(0, 91, 129))
-            backgroundTintList = android.content.res.ColorStateList.valueOf(Color.WHITE)
-            insetTop = 0; insetBottom = 0
-            setOnClickListener { startActivity(Intent(this@MainActivity, com.example.clase18_08zulema.ui.WorkshopFormActivity::class.java)) }
-        }
-        row.addView(create)
-        hero.addView(row)
-        addView(hero)
     }
 
-    private fun renderTags() {
-        if (!::tags.isInitialized) return
-        tags.removeAllViews()
-        (listOf("Todos") + categories).forEach { label ->
-            val chip = Chip(this).apply {
+    private fun loadMyRegistrations() {
+        WorkshopsRepository.myRegistrations { result ->
+            if (isFinishing || isDestroyed) return@myRegistrations
+            if (result is ApiResult.Success) {
+                val ids = result.value.filter { it.isActive }.map { it.workshopId }.toSet()
+                if (ids != enrolledIds) {
+                    enrolledIds = ids
+                    if (loadedOnce) render(animate = false)
+                }
+            }
+        }
+    }
+
+    private fun mergeCategories(items: List<Workshop>) {
+        val locale = Locale("es", "CO")
+        val merged = (categories + items.mapNotNull { it.category?.trim()?.takeIf(String::isNotEmpty) })
+            .distinctBy { it.lowercase(locale) }
+            .sortedBy { it.lowercase(locale) }
+        if (merged != categories) {
+            categories = merged
+            renderChips()
+        }
+    }
+
+    // ---------- Render ----------
+
+    private fun render(animate: Boolean) {
+        val visible = when {
+            scope == 0 -> workshops
+            user.isInstructor -> workshops.filter { it.ownerId == user.id }
+            else -> workshops.filter { it.id in enrolledIds }
+        }
+        count.text = if (visible.size == 1) "1 taller" else "${visible.size} talleres"
+        renderStats(visible, animate)
+
+        if (visible.isEmpty()) {
+            showEmpty()
+            return
+        }
+        list.removeAllViews()
+        val cards = visible.map { workshop ->
+            workshopCard(workshop, enrolled = workshop.id in enrolledIds) { card -> openDetail(card, workshop) }.also {
+                list.addView(it, matchWrap(if (list.childCount == 0) 0 else 18, this))
+            }
+        }
+        Motion.crossfade(list, skeleton, stateHolder)
+        if (animate) Motion.stagger(cards, step = 60, maxDelay = 360)
+    }
+
+    private fun renderStats(items: List<Workshop>, animate: Boolean) {
+        if (!user.isInstructor) return
+        val active = items.filter { it.isActive }
+        val values = listOf(
+            Triple("Activos", active.size.toLong(), c.primary),
+            Triple("Inscritos", active.sumOf { it.registeredPeople }, c.success),
+            Triple("Cupos libres", active.sumOf { it.availableSlots }, c.accent)
+        )
+        stats.removeAllViews()
+        values.forEachIndexed { index, (label, value, tint) ->
+            val number = text("0", TextRole.NUMBER, tint)
+            stats.addView(vertical().apply {
+                setPadding(dp(14), dp(14), dp(14), dp(14))
+                background = rounded(c.surface, dpf(20), dp(1), c.outline)
+                addView(number)
+                addView(context.text(label, TextRole.CAPTION, c.inkMuted), matchWrap(4, context))
+            }, weighted().apply { if (index > 0) marginStart = dp(10) })
+            if (animate) countUp(number, value) else number.text = value.toString()
+        }
+    }
+
+    private fun countUp(view: TextView, target: Long) {
+        ValueAnimator.ofFloat(0f, target.toFloat()).apply {
+            duration = 900
+            interpolator = Motion.emphasizedDecelerate
+            addUpdateListener { view.text = (it.animatedValue as Float).toLong().toString() }
+            start()
+        }
+    }
+
+    private fun renderChips() {
+        renderingChips = true
+        chips.removeAllViews()
+        (listOf(ALL) + categories).forEach { label ->
+            chips.addView(Chip(this).apply {
                 id = View.generateViewId()
                 text = label
                 isCheckable = true
-                isChecked = if (selectedCategory == null) label == "Todos" else label.equals(selectedCategory, true)
-                chipBackgroundColor = android.content.res.ColorStateList.valueOf(if (isChecked) Color.rgb(0, 143, 190) else Color.WHITE)
-                setTextColor(if (isChecked) Color.WHITE else Color.rgb(51, 73, 83))
-                chipStrokeWidth = Ui.dp(this@MainActivity, 1).toFloat()
-                chipStrokeColor = android.content.res.ColorStateList.valueOf(if (isChecked) Color.rgb(0, 143, 190) else Color.rgb(209, 222, 228))
-                chipCornerRadius = Ui.dp(this@MainActivity, 24).toFloat()
-                setOnClickListener {
-                    selectedCategory = label.takeUnless { it == "Todos" }
-                    renderTags()
-                    loadWorkshops(search.text?.toString())
-                }
-            }
-            tags.addView(chip)
+                isCheckedIconVisible = false
+                style(TextRole.LABEL)
+                val checked = intArrayOf(android.R.attr.state_checked)
+                chipBackgroundColor = ColorStateList(arrayOf(checked, intArrayOf()), intArrayOf(c.ink, c.surface))
+                setTextColor(ColorStateList(arrayOf(checked, intArrayOf()), intArrayOf(c.surface, c.inkMuted)))
+                chipStrokeColor = ColorStateList(arrayOf(checked, intArrayOf()), intArrayOf(c.ink, c.outline))
+                chipStrokeWidth = dpf(1)
+                chipCornerRadius = dpf(20)
+                chipMinHeight = dpf(40)
+                rippleColor = ColorStateList.valueOf(Color.argb(30, 0, 0, 0))
+                isChecked = if (selectedCategory == null) label == ALL else label.equals(selectedCategory, ignoreCase = true)
+            })
         }
+        renderingChips = false
     }
 
-    private fun showConnectionError(message: String) {
-        val panel = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-            gravity = Gravity.CENTER_HORIZONTAL
-            setPadding(Ui.dp(this@MainActivity, 22), Ui.dp(this@MainActivity, 22), Ui.dp(this@MainActivity, 22), Ui.dp(this@MainActivity, 22))
-            background = rounded(Color.WHITE, 24)
+    private fun showEmpty() {
+        val (title, body) = when {
+            scope == 1 && user.isInstructor -> "Aún no tienes talleres" to "Crea tu primer taller con el botón “Nuevo taller”."
+            scope == 1 -> "Todavía no tienes inscripciones" to "Explora la agenda e inscríbete en el taller que te interese."
+            else -> "No encontramos talleres" to "Prueba con otra búsqueda o con otra categoría."
         }
-        panel.addView(label("No logramos llegar a la API", 17, Color.rgb(32, 49, 58), true))
-        panel.addView(Ui.gap(this, 8))
-        panel.addView(Ui.body(this, message, 13f))
-        panel.addView(Ui.gap(this, 14))
-        panel.addView(Ui.button(this, "Configurar servidor") { showConnectionDialog() })
-        panel.addView(Ui.button(this, "Volver a intentar") { loadWorkshops(search.text?.toString()) })
-        list.addView(panel)
+        val filtered = selectedCategory != null || search.value.isNotEmpty()
+        showState(stateView(Glyph.SEARCH, title, body,
+            secondary = if (filtered) "Limpiar filtros" to { clearFilters() } else null))
     }
 
-    private fun showLocalNetworkPermission() {
-        if (!::loading.isInitialized) return
-        loading.visibility = View.GONE
-        list.removeAllViews()
-        val panel = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-            setPadding(Ui.dp(this@MainActivity, 20), Ui.dp(this@MainActivity, 20), Ui.dp(this@MainActivity, 20), Ui.dp(this@MainActivity, 20))
-            background = rounded(Color.WHITE, 24)
-        }
-        panel.addView(label("Conecta con tu comunidad", 17, Color.rgb(32, 49, 58), true))
-        panel.addView(Ui.gap(this, 8))
-        panel.addView(Ui.body(this, "Android necesita tu permiso para que esta app consulte el servidor de talleres en la red local. La conexión solo se usa para cargar y guardar talleres.", 13f))
-        panel.addView(Ui.gap(this, 14))
-        panel.addView(Ui.button(this, "Permitir conexión local") {
-            localNetworkPermission.launch("android.permission.ACCESS_LOCAL_NETWORK")
+    private fun showError(message: String) {
+        showState(stateView(Glyph.ALERT, "No logramos llegar a la API", message, c.danger, c.dangerContainer,
+            primary = "Volver a intentar" to { load(silent = false) },
+            secondary = "Configurar servidor" to { ServerConfig.showDialog(this) { load(silent = false) } }))
+    }
+
+    private fun showPermissionState() {
+        showState(stateView(Glyph.SERVER, "Conecta con tu comunidad",
+            "Android necesita tu permiso para consultar el servidor de talleres en la red local.",
+            primary = "Permitir conexión local" to { localNetworkPermission.launch(ServerConfig.LOCAL_NETWORK_PERMISSION) }))
+    }
+
+    private fun showState(view: View) {
+        stateHolder.removeAllViews()
+        stateHolder.addView(view)
+        Motion.crossfade(stateHolder, skeleton, list)
+    }
+
+    private fun clearFilters() {
+        selectedCategory = null
+        renderChips()
+        search.edit.setText("")
+        load(silent = false)
+    }
+
+    // ---------- Encabezado y navegación ----------
+
+    private fun header(): View = horizontal().apply {
+        val greeting = when (LocalTime.now().hour) { in 5..11 -> "Buenos días"; in 12..18 -> "Buenas tardes"; else -> "Buenas noches" }
+        addView(context.vertical().apply {
+            addView(context.text(greeting, TextRole.CAPTION, c.inkMuted))
+            addView(context.text(user.firstName, TextRole.TITLE_LARGE), matchWrap(2, context))
+        }, weighted())
+        addView(context.avatar(user.fullName, 46).apply {
+            isClickable = true
+            isFocusable = true
+            contentDescription = "Abrir perfil"
+            Motion.pressable(this, 0.9f)
+            setOnClickListener { openProfile() }
         })
-        list.addView(panel)
     }
 
-    private fun requiresLocalNetworkPermission(): Boolean = Build.VERSION.SDK_INT >= 37
+    private fun headline() = if (user.isInstructor) "Tus talleres,\nen un vistazo." else "Aprende algo\nnuevo esta semana."
 
-    private fun hasLocalNetworkPermission(): Boolean =
-        checkSelfPermission("android.permission.ACCESS_LOCAL_NETWORK") == PackageManager.PERMISSION_GRANTED
+    private fun openProfile() {
+        Sheets.profile(this, user,
+            onServer = { ServerConfig.showDialog(this) { load(silent = false) } },
+            onLogout = {
+                AuthRepository.logout()
+                goToLogin()
+            })
+    }
 
-    private fun showConnectionDialog() {
-        val inputLayout = TextInputLayout(this).apply {
-            hint = "http://10.0.2.2:8080/"
-            boxBackgroundMode = TextInputLayout.BOX_BACKGROUND_OUTLINE
-            setPadding(Ui.dp(this@MainActivity, 22), Ui.dp(this@MainActivity, 8), Ui.dp(this@MainActivity, 22), 0)
+    private fun openDetail(card: View, workshop: Workshop) {
+        val options = ActivityOptions.makeSceneTransitionAnimation(this, card, transitionNameFor(workshop.id))
+        startActivity(
+            Intent(this, WorkshopDetailActivity::class.java).putExtra(WorkshopDetailActivity.EXTRA_ID, workshop.id),
+            options.toBundle()
+        )
+    }
+
+    private fun createFab(): ExtendedFloatingActionButton = ExtendedFloatingActionButton(this).apply {
+        text = "Nuevo taller"
+        isAllCaps = false
+        icon = context.glyph(Glyph.PLUS, c.onPrimary, 22, 2.2f)
+        setTextColor(c.onPrimary)
+        backgroundTintList = ColorStateList.valueOf(c.primary)
+        iconTint = ColorStateList.valueOf(c.onPrimary)
+        shapeAppearanceModel = shapeAppearanceModel.withCornerSize(dpf(20))
+        setOnClickListener { formLauncher.launch(Intent(this@MainActivity, WorkshopFormActivity::class.java)) }
+        layoutParams = FrameLayout.LayoutParams(-2, -2, Gravity.BOTTOM or Gravity.END)
+        ViewCompat.setOnApplyWindowInsetsListener(this) { view, insets ->
+            val bars = insets.getInsets(WindowInsetsCompat.Type.systemBars())
+            (view.layoutParams as FrameLayout.LayoutParams).setMargins(0, 0, dp(20) + bars.right, dp(20) + bars.bottom)
+            view.requestLayout()
+            insets
         }
-        val input = TextInputEditText(this).apply {
-            setSingleLine(true)
-            setText(readServerUrl())
-            inputType = android.text.InputType.TYPE_CLASS_TEXT or android.text.InputType.TYPE_TEXT_VARIATION_URI
-        }
-        inputLayout.addView(input)
-        AlertDialog.Builder(this)
-            .setTitle("Conectar con el servidor")
-            .setMessage("Emulador: deja 10.0.2.2. En un teléfono, escribe la IP local del computador, por ejemplo http://192.168.1.20:8080/; ambos deben estar en la misma red.")
-            .setView(inputLayout)
-            .setNegativeButton("Cancelar", null)
-            .setPositiveButton("Guardar y probar", null)
-            .create().also { dialog ->
-                dialog.setOnShowListener {
-                    dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener {
-                        val url = normalizeUrl(input.text?.toString().orEmpty())
-                        if (url == null) {
-                            inputLayout.error = "Usa una dirección http:// o https:// válida"
-                            return@setOnClickListener
-                        }
-                        inputLayout.error = null
-                        getSharedPreferences("api_connection", MODE_PRIVATE).edit().putString("base_url", url).apply()
-                        WorkshopsApi.configure(url)
-                        dialog.dismiss()
-                        loadWorkshops(search.text?.toString())
-                    }
-                }
-                dialog.show()
-            }
+        fab = this
+        scroll.setOnScrollChangeListener(NestedScrollView.OnScrollChangeListener { _, _, y, _, oldY ->
+            if (y > oldY + 6 && isExtended) shrink() else if (y < oldY - 6 && !isExtended) extend()
+        })
+        Motion.pop(this, 350)
     }
 
-    private fun readServerUrl(): String = getSharedPreferences("api_connection", MODE_PRIVATE)
-        .getString("base_url", WorkshopsApi.DEFAULT_BASE_URL)
-        ?.replace("http://10.0.2.2:8080/", WorkshopsApi.DEFAULT_BASE_URL)
-        ?: WorkshopsApi.DEFAULT_BASE_URL
-
-    private fun normalizeUrl(value: String): String? {
-        val candidate = value.trim().let { if (it.endsWith("/")) it else "$it/" }
-        val parsed = runCatching { java.net.URI(candidate) }.getOrNull() ?: return null
-        if (parsed.scheme !in listOf("http", "https") || parsed.host.isNullOrBlank() || parsed.userInfo != null) return null
-        if (parsed.path !in listOf("", "/")) return null
-        return candidate
-    }
-
-    private fun emptyState(): View = LinearLayout(this).apply {
-        orientation = LinearLayout.VERTICAL
-        setPadding(Ui.dp(this@MainActivity, 18), Ui.dp(this@MainActivity, 20), Ui.dp(this@MainActivity, 18), Ui.dp(this@MainActivity, 20))
-        background = rounded(Color.WHITE, 22)
-        addView(label("Todavía no hay talleres en esta categoría", 16, Color.rgb(35, 52, 61), true))
-        addView(Ui.gap(this@MainActivity, 6))
-        addView(Ui.body(this@MainActivity, "Prueba otro filtro o crea una nueva actividad.", 13f))
-    }
-
-    private fun label(textValue: String, size: Int, color: Int, bold: Boolean) = TextView(this).apply {
-        text = textValue
-        textSize = size.toFloat()
-        setTextColor(color)
-        if (bold) setTypeface(typeface, Typeface.BOLD)
-    }
-
-    private fun rounded(color: Int, radius: Int) = GradientDrawable().apply {
-        setColor(color)
-        cornerRadius = Ui.dp(this@MainActivity, radius).toFloat()
-    }
-
-    private fun formatDate(value: String): String = runCatching {
-        LocalDateTime.parse(value).format(DateTimeFormatter.ofPattern("EEE d MMM · h:mm a", Locale("es", "CO")))
-    }.getOrDefault(value)
+    private companion object { const val ALL = "Todos" }
 }
